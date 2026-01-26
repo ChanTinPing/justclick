@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Just Click</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="app">
+    <!-- Start Screen: ONLY 3 visible elements -->
+    <section id="startScreen" class="startScreen">
+      <button id="settingsBtn" class="iconBtn" aria-label="Settings" title="Settings">⚙</button>
+      <h1 class="bigTitle">Just Click</h1>
+      <button id="startBtn" class="startBtn">Start</button>
+    </section>
+
+    <!-- Settings Modal -->
+    <div id="modalBackdrop" class="modalBackdrop hidden"></div>
+    <section id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Settings">
+      <div class="modalHeader">
+        <div class="modalTitle">Settings</div>
+        <button id="closeSettingsBtn" class="iconBtn small" aria-label="Close settings">✕</button>
+      </div>
+
+      <div class="modalBody">
+        <div class="settingGroup">
+          <div class="groupLabel">Pieces</div>
+          <div class="choiceRow" role="radiogroup" aria-label="Piece count">
+            <label class="choice">
+              <input type="radio" name="pieceCount" value="20" checked>
+              <span>20</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="pieceCount" value="50">
+              <span>50</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="pieceCount" value="100">
+              <span>100</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="settingGroup">
+          <div class="groupLabel">Random seed</div>
+          <input id="seedInput" class="textInput" type="text" placeholder="" />
+        </div>
+
+        <div class="settingGroup">
+          <div class="groupLabel">Timer</div>
+          <label class="toggle">
+            <input id="showTimerToggle" type="checkbox" checked />
+            <span class="toggleUI"></span>
+            <span class="toggleText">Show timer</span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- Game Screen -->
+    <section id="gameScreen" class="gameScreen hidden">
+      <header class="topbar">
+        <div class="left">
+          <div id="timeStat" class="stat">
+            <span class="label">Time</span>
+            <span id="timeText" class="value">00:00.0</span>
+          </div>
+
+          <div class="stat">
+            <span class="label">Current</span>
+            <span id="currentText" class="value">0</span>
+          </div>
+
+          <div class="stat">
+            <span class="label">Next</span>
+            <span id="nextText" class="value">1</span>
+          </div>
+
+        </div>
+
+        <div id="msg" class="msg"></div>
+
+        <div class="right">
+          <button id="pauseBtn" class="btn">Pause</button>
+          <button id="newBoardBtn" class="btn">New</button>
+          <button id="backBtn" class="btn ghost">Home</button>
+        </div>
+      </header>
+
+      <div class="boardArea">
+        <div id="boardWrap" class="boardWrap" aria-label="game board">
+          <svg id="boardSvg" class="boardSvg" viewBox="0 0 1000 1000" role="img"></svg>
+
+          <div id="pausedOverlay" class="pausedOverlay hidden">
+            <div class="pausedPill">Paused</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Voronoi generator (UMD global d3.Delaunay) -->
+  <script src="https://cdn.jsdelivr.net/npm/d3-delaunay@6/dist/d3-delaunay.min.js"></script>
+  <script src="./main.js"></script>
+</body>
+</html>
