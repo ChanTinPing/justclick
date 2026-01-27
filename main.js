@@ -22,6 +22,7 @@ const els = {
   closeSettingsBtn: $("#closeSettingsBtn"),
 
   seedInput: $("#seedInput"),
+  seedShare: $("#seedShare"),
   showTimerToggle: $("#showTimerToggle"),
 
   startBtn: $("#startBtn"),
@@ -67,6 +68,8 @@ let game = {
   numToPolygon: new Map(),
   numToText: new Map(),
   cellsGroupEl: null,
+
+  runSeedStr: "",
 };
 
 function getPieceCountFromRadios() {
@@ -92,6 +95,7 @@ function readConfigFromUI() {
 function showStartScreen() {
   els.startScreen.classList.remove("hidden");
   els.gameScreen.classList.add("hidden");
+  setSeedShare("");
 }
 function showGameScreen() {
   els.startScreen.classList.add("hidden");
@@ -114,6 +118,26 @@ function fmtTime(ms) {
   const tenths = Math.floor((s - sInt) * 10);
   return `${String(m).padStart(2, "0")}:${String(sInt).padStart(2, "0")}.${tenths}`;
 }
+
+function genAutoSeed() {
+  // 足够短、可复制、基本不会撞
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function setSeedShare(seedOrEmpty) {
+  if (!els.seedShare) return;
+
+  const s = (seedOrEmpty || "").trim();
+  if (!s) {
+    els.seedShare.textContent = "";
+    els.seedShare.classList.add("hidden");
+    return;
+  }
+
+  els.seedShare.textContent = `seed\n${s}`;  // 去掉 random 字眼
+  els.seedShare.classList.remove("hidden");
+}
+
 
 function applyTimerVisibility() {
   if (game.config?.showTimer) els.timeStat.classList.remove("hidden");
@@ -240,7 +264,20 @@ function startNewGame(config) {
   game.config = config;
   applyTimerVisibility();
 
-  const { cells } = buildBoard(config);
+  const userSeed = (config.seedStr || "").trim();
+  const autoSeedUsed = (userSeed.length === 0);
+  const runSeed = autoSeedUsed ? genAutoSeed() : userSeed;
+
+  game.runSeedStr = runSeed;
+
+  // 用 runSeed 生成棋盘，但不污染用户配置（seed 为空时 New 仍会每次随机）
+  const runConfig = { ...config, seedStr: runSeed };
+
+  // 只有“用户没填 seed”时，才在底部显示 seed 方便复制
+  setSeedShare(runSeed);
+
+  const { cells } = buildBoard(runConfig);
+
   game.total = config.pieceCount; // ensure font uses correct N
   renderBoard(cells);
   resetRunState(config.pieceCount);
