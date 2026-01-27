@@ -439,6 +439,12 @@ body{
   .left .label{ font-size: 10px; }
   .left .value{ font-size: 15px; }
 
+  .boardWrap{
+    width: calc(100vw - 12px);
+    height: calc(100vw - 12px);
+  }
+  .app{ padding: 12px 6px 18px; }
+
   .clickBanner{
     grid-area: click;
     justify-self: center;
