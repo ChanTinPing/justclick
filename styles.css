@@ -394,3 +394,31 @@ body{
   letter-spacing: 1px;
   box-shadow: 0 14px 30px rgba(20,40,80,0.12);
 }
+
+/* Mobile-only: shrink top HUD + buttons without affecting desktop */
+@media (max-width: 520px) {
+  .topbar{
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .left, .right{
+    gap: 8px;
+  }
+
+  /* Time / Current / Next cards */
+  .stat{
+    padding: 7px 9px;
+    gap: 8px;
+    border-radius: 12px;
+  }
+  .label{ font-size: 10px; }
+  .value{ font-size: 15px; }
+
+  /* Pause / New / Home */
+  .btn{
+    padding: 8px 10px;
+    border-radius: 12px;
+    font-size: 14px;
+  }
+}
