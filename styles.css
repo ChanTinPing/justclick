@@ -440,7 +440,7 @@ body{
   .left .value{ font-size: 15px; }
 
   .boardWrap{
-    width: calc(100vw - 12px);
+    width: calc(100vw - 4px);
     height: calc(100vw - 12px);
   }
   .app{ padding: 12px 6px 18px; }
