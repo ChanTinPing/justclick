@@ -404,7 +404,14 @@ body{
       "left right"
       "msg  msg";
   }
-  .left{ grid-area: left; }
+  .left{
+    flex-direction: column;  /* 竖排 */
+    flex-wrap: nowrap;       /* 不允许横向换行 */
+    align-items: stretch;    /* 三个卡片同宽 */
+  }
+  .left .stat{
+    width: 100%;             /* 跟随 left 的宽度（= 最宽那个 Time） */
+  }
   .right{
     flex-direction: column;   /* 竖排一列 */
     align-items: stretch;     /* 按钮同宽 */
