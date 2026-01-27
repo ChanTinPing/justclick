@@ -1,13 +1,9 @@
 "use strict";
 
 /**
- * Updates requested:
- * - Bigger number font
- * - HUD shows Current and Next
- * - No colored pieces (uniform neutral fill)
- * - Settings seed: no "e.g." / no "optional" wording
- * - Remove fixed parameter note
- * - Settings in English
+ * HUD change:
+ * - Top bar: left shows Time (optional), center shows "Click X" / "Done!"
+ * - Buttons (Pause/New/Home) moved below board, above seed share
  */
 
 const $ = (sel) => document.querySelector(sel);
@@ -29,9 +25,7 @@ const els = {
 
   timeStat: $("#timeStat"),
   timeText: $("#timeText"),
-  currentText: $("#currentText"),
-  nextText: $("#nextText"),
-  msg: $("#msg"),
+  clickBanner: $("#clickBanner"),
 
   pauseBtn: $("#pauseBtn"),
   newBoardBtn: $("#newBoardBtn"),
@@ -102,13 +96,6 @@ function showGameScreen() {
   els.gameScreen.classList.remove("hidden");
 }
 
-function setMsg(text, kind = "") {
-  els.msg.textContent = text || "";
-  els.msg.classList.remove("bad", "good", "doneBanner");
-  if (kind === "bad") els.msg.classList.add("bad");
-  if (kind === "good") els.msg.classList.add("good");
-}
-
 function fmtTime(ms) {
   const total = Math.max(0, ms);
   const sec = total / 1000;
@@ -134,14 +121,28 @@ function setSeedShare(seedOrEmpty) {
     return;
   }
 
-  els.seedShare.textContent = `seed\n${s}`;  // 去掉 random 字眼
+  els.seedShare.textContent = `seed\n${s}`;
   els.seedShare.classList.remove("hidden");
 }
-
 
 function applyTimerVisibility() {
   if (game.config?.showTimer) els.timeStat.classList.remove("hidden");
   else els.timeStat.classList.add("hidden");
+}
+
+let bannerLockUntil = 0;
+
+function bannerBaseText() {
+  if (game.state === STATE.FINISHED) return "Done!";
+  return `Click ${game.next}`;
+}
+
+function setBanner(text, kind = "") {
+  if (!els.clickBanner) return;
+  els.clickBanner.textContent = text || "";
+  els.clickBanner.classList.remove("bad", "good", "doneBanner");
+  if (kind === "bad") els.clickBanner.classList.add("bad");
+  if (kind === "good") els.clickBanner.classList.add("good", "doneBanner");
 }
 
 function updateHUD() {
@@ -149,8 +150,18 @@ function updateHUD() {
     const cur = game.elapsedMs + (game.state === STATE.PLAYING ? (performance.now() - game.startPerf) : 0);
     els.timeText.textContent = fmtTime(cur);
   }
-  els.currentText.textContent = String(game.current);
-  els.nextText.textContent = String(game.next);
+
+  // center banner: Click X / Done!
+  if (game.state === STATE.FINISHED) {
+    bannerLockUntil = 0;
+    setBanner("Done!", "good");
+  } else {
+    const now = performance.now();
+    if (now >= bannerLockUntil) {
+      setBanner(bannerBaseText());
+    }
+  }
+
   els.timeText.classList.toggle("doneTime", game.state === STATE.FINISHED);
 }
 
@@ -256,7 +267,8 @@ function resetRunState(total) {
   els.boardWrap.classList.remove("flash-bad");
   els.pausedOverlay.classList.add("hidden");
   els.pauseBtn.textContent = "Pause";
-  setMsg("");
+  bannerLockUntil = 0;
+
   updateHUD();
 }
 
@@ -274,7 +286,7 @@ function startNewGame(config) {
   const runConfig = { ...config, seedStr: runSeed };
 
   // 只有“用户没填 seed”时，才在底部显示 seed 方便复制
-  setSeedShare(runSeed);
+  setSeedShare(autoSeedUsed ? runSeed : "");
 
   const { cells } = buildBoard(runConfig);
 
@@ -293,10 +305,6 @@ function finishGame() {
   stopTimer();
   game.state = STATE.FINISHED;
   updateHUD();
-
-  setMsg("Done!", "good");
-  els.msg.classList.add("doneBanner");   // 让 Done 变大（只对 Done 生效）
-  els.timeText.classList.add("doneTime"); // 计时变绿（如果你想立刻生效）
 }
 
 function pauseGame() {
@@ -329,6 +337,11 @@ function flashWrong() {
   els.boardWrap.classList.add("flash-bad");
 }
 
+function showWrongHint() {
+  bannerLockUntil = performance.now() + 180;
+  setBanner("Wrong!", "bad");
+}
+
 function onCellClick(num) {
   if (game.state !== STATE.PLAYING) return;
 
@@ -337,18 +350,17 @@ function onCellClick(num) {
     const textEl = game.numToText.get(num);
 
     if (polyEl) {
-      polyEl.classList.add("hit");                     // 短暂提示
+      polyEl.classList.add("hit");
       window.setTimeout(() => polyEl.classList.remove("hit"), 160);
     }
     if (textEl) {
-      // 数字变绿：只闪一下，不永久
       textEl.classList.add("done");
       window.setTimeout(() => textEl.classList.remove("done"), 160);
     }
 
     game.current = num;
     game.next = num + 1;
-    setMsg("");
+    bannerLockUntil = 0;
 
     if (game.next > game.total) {
       finishGame();
@@ -359,10 +371,10 @@ function onCellClick(num) {
     const textEl = game.numToText.get(num);
     if (textEl) {
       textEl.classList.add("wrong");
-      window.setTimeout(() => textEl.classList.remove("wrong"), 220);
+      window.setTimeout(() => textEl.classList.remove("wrong"), 180);
     }
     flashWrong();
-    setMsg(`Wrong: next is ${game.next} (you clicked ${num})`, "bad");
+    showWrongHint();
     addPenalty(game.config.wrongPenaltySec);
   }
 }

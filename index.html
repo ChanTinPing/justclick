@@ -61,31 +61,16 @@
     <!-- Game Screen -->
     <section id="gameScreen" class="gameScreen hidden">
       <header class="topbar">
+        <!-- left: Time only -->
         <div class="left">
           <div id="timeStat" class="stat">
             <span class="label">Time</span>
             <span id="timeText" class="value">00:00.0</span>
           </div>
-
-          <div class="stat">
-            <span class="label">Current</span>
-            <span id="currentText" class="value">0</span>
-          </div>
-
-          <div class="stat">
-            <span class="label">Next</span>
-            <span id="nextText" class="value">1</span>
-          </div>
-
         </div>
 
-        <div id="msg" class="msg"></div>
-
-        <div class="right">
-          <button id="pauseBtn" class="btn">Pause</button>
-          <button id="newBoardBtn" class="btn">New</button>
-          <button id="backBtn" class="btn ghost">Home</button>
-        </div>
+        <!-- center: Click X / Done! -->
+        <div id="clickBanner" class="clickBanner">Click 1</div>
       </header>
 
       <div class="boardArea">
@@ -96,6 +81,13 @@
             <div class="pausedPill">Paused</div>
           </div>
         </div>
+      </div>
+
+      <!-- Buttons moved BELOW the board, ABOVE the seed share -->
+      <div class="bottomControls">
+        <button id="pauseBtn" class="btn">Pause</button>
+        <button id="newBoardBtn" class="btn">New</button>
+        <button id="backBtn" class="btn ghost">Home</button>
       </div>
 
       <div id="seedShare" class="seedShare hidden"></div>
