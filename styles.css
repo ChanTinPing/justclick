@@ -410,8 +410,13 @@ body{
     align-items: stretch;    /* 三个卡片同宽 */
   }
   .left .stat{
+    padding: 7px 9px;
+    gap: 8px;
+    border-radius: 12px;
     width: 100%;             /* 跟随 left 的宽度（= 最宽那个 Time） */
   }
+  .left .label{ font-size: 10px; }
+  .left .value{ font-size: 15px; }
   .right{
     flex-direction: column;   /* 竖排一列 */
     align-items: stretch;     /* 按钮同宽 */
