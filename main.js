@@ -38,7 +38,7 @@ const els = {
 
 const PIECE_OPTIONS = [20, 50, 100];
 const DEFAULT_PIECE_COUNT = 20;
-const FIXED_LLOYD_ITERS = 0;
+const FIXED_LLOYD_ITERS = 3;
 const WRONG_PENALTY_SEC = 10;
 const BOARD_SIZE = 1000;
 const STATE = { IDLE: "idle", PLAYING: "playing", PAUSED: "paused", FINISHED: "finished" };
@@ -195,8 +195,8 @@ function clearSvg(svg) {
 }
 
 function getFontSizeForN(n) {
-  const size = Math.round(170 / Math.sqrt(n));
-  return Math.max(18, Math.min(44, size));
+  const size = Math.round(220 / Math.sqrt(n));
+  return size;
 }
 
 function renderBoard(cells) {
