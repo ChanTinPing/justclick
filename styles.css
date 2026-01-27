@@ -334,9 +334,16 @@ body{
 /* Cells (NO per-cell color) */
 .cell{
   fill: rgba(253, 240, 119, 0.4);
-  stroke: rgba(11,27,58,0.22);
-  stroke-width: 1.2;
+  stroke: none;
   transition: filter 0.12s ease, opacity 0.12s ease;
+}
+.edgePath{
+  fill: none;
+  stroke: rgb(126, 145, 127);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 .cell:hover{
   filter: brightness(1.03);

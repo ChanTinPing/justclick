@@ -214,24 +214,109 @@ function renderBoard(cells) {
   border.setAttribute("stroke-width", "3");
   svg.appendChild(border);
 
-  const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  g.setAttribute("id", "cellsGroup");
-  svg.appendChild(g);
-  game.cellsGroupEl = g;
+  // Root group (this is what pause hides)
+  const root = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  root.setAttribute("id", "cellsGroup");
+  svg.appendChild(root);
+  game.cellsGroupEl = root;
 
+  // Layers: fill -> edges -> text
+  const fillsG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  const edgesG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  const textsG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  root.appendChild(fillsG);
+  root.appendChild(edgesG);
+  root.appendChild(textsG);
+
+  // --- helpers ---
+  function q(x) { return Math.round(x * 8) / 8; } // 量化更粗一点，更容易匹配共享边
+  function edgeKey(a, b) {
+    const ax = q(a[0]), ay = q(a[1]);
+    const bx = q(b[0]), by = q(b[1]);
+    const A = `${ax},${ay}`, B = `${bx},${by}`;
+    return (A < B) ? `${A}|${B}` : `${B}|${A}`; // undirected
+  }
+  function samePoint(p, r) {
+    return Math.abs(p[0] - r[0]) < 1e-6 && Math.abs(p[1] - r[1]) < 1e-6;
+  }
+  function hash32(str) {
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+  function rand01(key) { return (hash32(key) % 1000000) / 1000000; }
+
+  // build edge map: key -> {a,b,count,c1,c2}
+  const edgeMap = new Map();
+  for (const cell of cells) {
+    const poly = cell.poly;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i];
+      const b = poly[(i + 1) % poly.length];
+      const k = edgeKey(a, b);
+      let e = edgeMap.get(k);
+      if (!e) { e = { a, b, count: 0, c1: null, c2: null }; edgeMap.set(k, e); }
+      e.count++;
+    }
+  }
+
+  // curve ONLY truly shared edges (count==2)
+  for (const [k, e] of edgeMap) {
+    if (e.count !== 2) continue;
+
+    const ax = e.a[0], ay = e.a[1], bx = e.b[0], by = e.b[1];
+    const vx = bx - ax, vy = by - ay;
+    const len = Math.hypot(vx, vy);
+    if (len < 18) continue;
+
+    const nx = -vy / len, ny = vx / len;
+    const r = rand01(game.runSeedStr + "|" + k);
+
+    // “一点点点”：幅度更保守，避免看起来像乱扭
+    const amp = Math.min(4, 0.06 * len) * (r * 2 - 1);
+
+    e.c1 = [ax + vx * 0.33 + nx * amp, ay + vy * 0.33 + ny * amp];
+    e.c2 = [ax + vx * 0.66 + nx * amp, ay + vy * 0.66 + ny * amp];
+  }
+
+  function polyToPathD(poly) {
+    let d = `M ${poly[0][0]} ${poly[0][1]}`;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i];
+      const b = poly[(i + 1) % poly.length];
+      const k = edgeKey(a, b);
+      const e = edgeMap.get(k);
+
+      if (e && e.count === 2 && e.c1 && e.c2) {
+        const forward = samePoint(a, e.a) && samePoint(b, e.b);
+        const c1 = forward ? e.c1 : e.c2;
+        const c2 = forward ? e.c2 : e.c1;
+        d += ` C ${c1[0]} ${c1[1]} ${c2[0]} ${c2[1]} ${b[0]} ${b[1]}`;
+      } else {
+        d += ` L ${b[0]} ${b[1]}`;
+      }
+    }
+    return d + " Z";
+  }
+
+  // map num -> elements
   game.numToPolygon.clear();
   game.numToText.clear();
 
   const fontSize = getFontSizeForN(game.total);
 
+  // 1) draw fills (curved path for shared edges)
   for (const cell of cells) {
-    const polyEl = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-    const ptsStr = cell.poly.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
-    polyEl.setAttribute("points", ptsStr);
-    polyEl.classList.add("cell");
-    polyEl.dataset.num = String(cell.num);
-
-    polyEl.addEventListener("click", () => onCellClick(cell.num));
+    const pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    pathEl.setAttribute("d", polyToPathD(cell.poly));
+    pathEl.classList.add("cell");
+    pathEl.dataset.num = String(cell.num);
+    pathEl.addEventListener("click", () => onCellClick(cell.num));
+    fillsG.appendChild(pathEl);
+    game.numToPolygon.set(cell.num, pathEl);
 
     const textEl = document.createElementNS("http://www.w3.org/2000/svg", "text");
     textEl.setAttribute("x", String(cell.centroid[0]));
@@ -241,12 +326,28 @@ function renderBoard(cells) {
     textEl.classList.add("cellText");
     textEl.style.fontSize = `${fontSize}px`;
     textEl.textContent = String(cell.num);
-
-    g.appendChild(polyEl);
-    g.appendChild(textEl);
-
-    game.numToPolygon.set(cell.num, polyEl);
+    textsG.appendChild(textEl);
     game.numToText.set(cell.num, textEl);
+  }
+
+  // 2) draw edges ONCE for ALL edges:
+  // - count==2: shared internal edges (curved if exists)
+  // - count==1: hard boundaries / outer boundaries (straight)
+  for (const [k, e] of edgeMap) {
+    const a = e.a, b = e.b;
+    const edgeEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+
+    if (e.count === 2 && e.c1 && e.c2) {
+      edgeEl.setAttribute(
+        "d",
+        `M ${a[0]} ${a[1]} C ${e.c1[0]} ${e.c1[1]} ${e.c2[0]} ${e.c2[1]} ${b[0]} ${b[1]}`
+      );
+    } else {
+      edgeEl.setAttribute("d", `M ${a[0]} ${a[1]} L ${b[0]} ${b[1]}`);
+    }
+
+    edgeEl.classList.add("edgePath");
+    edgesG.appendChild(edgeEl);
   }
 }
 

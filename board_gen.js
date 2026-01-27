@@ -330,12 +330,50 @@
     }
 
     // centers for micro
-    const K = 3; // 2..4
+    const K = 2 + Math.floor(rand() * 2); // 2..4
     const centers = [];
-    const kUse = Math.min(K, Math.max(1, macroCount)); // keep deterministic & safe
-    for (let k = 0; k < kUse; k++) {
-      centers.push(sampleUniformInConvexPoly(regionPoly, triCache, rand));
+    const kUse = Math.min(K, Math.max(1, macroCount)); // 保持你原来的安全逻辑:contentReference[oaicite:2]{index=2}
+
+    // 1) 候选池：多采一些均匀点（不算拒绝采样，因为 sampleUniform... 是直接采样）:contentReference[oaicite:3]{index=3}
+    const candN = Math.max(32, kUse * 16);
+    const candidates = [];
+    for (let t = 0; t < candN; t++) {
+      candidates.push(sampleUniformInConvexPoly(regionPoly, triCache, rand));
     }
+
+    // 2) 第一个 center：随机从候选里取
+    let idx0 = Math.floor(rand() * candidates.length);
+    centers.push(candidates[idx0]);
+    candidates.splice(idx0, 1);
+
+    // 3) 后续：每次选“到已选 centers 的最近距离”最大的点（maximin）
+    for (let k = 1; k < kUse; k++) {
+      let bestIdx = 0;
+      let bestScore = -1;
+
+      for (let i = 0; i < candidates.length; i++) {
+        const p = candidates[i];
+
+        let minD2 = Infinity;
+        for (let s = 0; s < centers.length; s++) {
+          const dx = p[0] - centers[s][0];
+          const dy = p[1] - centers[s][1];
+          const d2 = dx * dx + dy * dy;
+          if (d2 < minD2) minD2 = d2;
+        }
+
+        // 小噪声打破完全平局，避免“总选最早的”带来微小结构
+        const score = minD2 + 1e-12 * rand();
+        if (score > bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
+      }
+
+      centers.push(candidates[bestIdx]);
+      candidates.splice(bestIdx, 1);
+    }
+
 
     // micro: pull toward centers via convex combination
     for (let i = 0; i < microCount; i++) {
