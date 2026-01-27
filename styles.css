@@ -406,8 +406,11 @@ body{
   }
   .left{ grid-area: left; }
   .right{
-    grid-area: right;
-    flex-wrap: nowrap;      /* 关键：右侧不许换行 */
+    flex-direction: column;   /* 竖排一列 */
+    align-items: stretch;     /* 按钮同宽 */
+    gap: 10px;                /* 竖向间距 */
+    justify-self: end;        /* 贴右 */
+    display: flex;
   }
   .msg{
     grid-area: msg;
