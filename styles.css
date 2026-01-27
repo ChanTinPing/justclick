@@ -397,28 +397,27 @@ body{
 
 /* Mobile-only: shrink top HUD + buttons without affecting desktop */
 @media (max-width: 520px) {
+  /* 让右侧按钮有足够宽度：左 1fr + 右 auto，并把 msg 放到下一行 */
   .topbar{
-    gap: 8px;
-    margin-bottom: 8px;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "left right"
+      "msg  msg";
+  }
+  .left{ grid-area: left; }
+  .right{
+    grid-area: right;
+    flex-wrap: nowrap;      /* 关键：右侧不许换行 */
+  }
+  .msg{
+    grid-area: msg;
+    justify-self: stretch;
   }
 
-  .left, .right{
-    gap: 8px;
-  }
-
-  /* Time / Current / Next cards */
-  .stat{
-    padding: 7px 9px;
-    gap: 8px;
-    border-radius: 12px;
-  }
-  .label{ font-size: 10px; }
-  .value{ font-size: 15px; }
-
-  /* Pause / New / Home */
+  /* 若还嫌挤，再稍微缩按钮（可选） */
   .btn{
     padding: 8px 10px;
-    border-radius: 12px;
     font-size: 14px;
+    white-space: nowrap;
   }
 }
