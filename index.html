@@ -21,6 +21,10 @@
           <div class="groupLabel">Pieces</div>
           <div class="choiceRow" role="radiogroup" aria-label="Piece count">
             <label class="choice">
+              <input type="radio" name="pieceCount" value="12">
+              <span>12</span>
+            </label>
+            <label class="choice">
               <input type="radio" name="pieceCount" value="20" checked>
               <span>20</span>
             </label>
@@ -38,6 +42,24 @@
         <div class="settingGroup">
           <div class="groupLabel">Seed</div>
           <input id="seedInput" class="textInput" type="text" placeholder="" />
+        </div>
+
+        <div class="settingGroup">
+          <div class="groupLabel">Mode</div>
+          <div class="choiceRow modeRow" role="radiogroup" aria-label="Mode">
+            <label class="choice">
+              <input type="radio" name="mode" value="easy">
+              <span>Easy</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="mode" value="normal" checked>
+              <span>Normal</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="mode" value="hard">
+              <span>Hard</span>
+            </label>
+          </div>
         </div>
 
         <div class="settingGroup">
@@ -60,11 +82,16 @@
           <div id="timeStat" class="stat">
             <span class="label">Time</span>
             <span id="timeText" class="value">00:00.0</span>
+            <span id="penaltyHint" class="penaltyHint hidden"></span>
           </div>
         </div>
 
         <!-- center: Click X / Done! -->
         <div id="clickBanner" class="clickBanner">Click 1</div>
+
+        <div class="right">
+          <div id="modePill" class="modePill">mode (Normal)</div>
+        </div>
       </header>
 
       <div class="boardArea">

@@ -158,6 +158,11 @@ body{
   padding: 14px;
 }
 
+.modeRow .choice{
+  font-size: 15px;   /* 想更小就 11px */
+  padding: 8px 10px; /* 也会让胶囊按钮更矮 */
+}
+
 .settingGroup{
   padding: 8px;
   border: 1px solid rgba(40,66,117,0.12);
@@ -262,6 +267,7 @@ body{
 /* topbar areas (used by mobile layout) */
 .left{ grid-area: left; }
 .clickBanner{ grid-area: click; }
+.right{ grid-area: right; }
 
 .left{
   display:flex;
@@ -269,6 +275,12 @@ body{
   gap: 10px;
   flex-wrap: wrap;
   justify-self: start;
+}
+.right{
+  display:flex;
+  align-items:center;
+  justify-self: end;
+  padding-right: 30px;
 }
 
 .stat{
@@ -283,6 +295,43 @@ body{
 }
 .label{ font-size: 12px; color: rgba(75,99,142,0.95); font-weight: 800; }
 .value{ font-size: 18px; font-weight: 900; }
+
+.modePill{
+  padding: 10px 12px;
+  border: 1px solid rgba(40,66,117,0.14);
+  background: rgba(255,255,255,0.70);
+  border-radius: 14px;
+  box-shadow: 0 10px 24px rgba(20,40,80,0.10);
+
+  font-weight: 900;
+  font-size: 14px;
+  color: rgba(11,27,58,0.92); /* 游玩时黑色 */
+  white-space: nowrap;
+
+  min-width: 100px;        /* 想更窄/更宽就调这里 */
+  display: flex;
+  align-items: center;
+  justify-content: center; /* 文字水平居中 */
+}
+.modePill.done{ color: var(--good); } /* 结束时绿色 */
+
+
+.penaltyHint{
+  color: var(--bad);
+  font-size: 16px;
+  font-weight: 900;
+  margin-left: 2px;
+}
+
+.penaltyHint.pop{
+  animation: penaltyPop 650ms ease-out 0s 1;
+}
+
+@keyframes penaltyPop{
+  0%{ opacity: 0; transform: translateY(-2px); }
+  15%{ opacity: 1; transform: translateY(0); }
+  100%{ opacity: 0; transform: translateY(0); }
+}
 
 .clickBanner{
   min-height: 18px;
@@ -355,6 +404,10 @@ body{
   stroke: none;
   transition: filter 0.12s ease, opacity 0.12s ease;
 }
+/* Easy mode: permanently mark finished cells */
+.cell.easyDone{
+  fill: rgba(253, 240, 119, 0.72); /* 想更深/更浅就调这里的 alpha */
+}
 .edgePath{
   fill: none;
   stroke: rgb(126, 145, 127);
@@ -394,6 +447,15 @@ body{
   0%{ filter: brightness(1.00); }
   50%{ filter: brightness(1.12); }
   100%{ filter: brightness(1.00); }
+}
+/* Hard mode: correct cell flashes green */
+.mode-hard .cell.hit{
+  animation: goodFlash 160ms ease-out 0s 1;
+}
+@keyframes goodFlash{
+  0%{ fill: rgba(253, 240, 119, 0.4); }
+  50%{ fill: rgba(23,201,100,0.40); }
+  100%{ fill: rgba(253, 240, 119, 0.4); }
 }
 
 /* Flash on wrong */
@@ -446,10 +508,10 @@ body{
 
 @media (max-width: 520px) {
   .topbar{
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr auto;
     grid-template-areas:
-      "left"
-      "click";
+      "left right"
+      "click click";
     gap: 8px;
   }
   .left{

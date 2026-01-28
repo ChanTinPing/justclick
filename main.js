@@ -21,6 +21,8 @@ const els = {
   timeStat: $("#timeStat"),
   timeText: $("#timeText"),
   clickBanner: $("#clickBanner"),
+  modePill: $("#modePill"),
+  penaltyHint: $("#penaltyHint"),
 
   pauseBtn: $("#pauseBtn"),
   newBoardBtn: $("#newBoardBtn"),
@@ -31,8 +33,10 @@ const els = {
   pausedOverlay: $("#pausedOverlay"),
 };
 
-const PIECE_OPTIONS = [20, 50, 100];
+const PIECE_OPTIONS = [12, 20, 50, 100];
 const DEFAULT_PIECE_COUNT = 20;
+const MODE_OPTIONS = ["easy", "normal", "hard"];
+const DEFAULT_MODE = "normal";
 const FIXED_LLOYD_ITERS = 3;
 const WRONG_PENALTY_SEC = 10;
 const BOARD_SIZE = 1000;
@@ -71,9 +75,20 @@ function setPieceCountRadios(n) {
   const el = document.querySelector(`input[name="pieceCount"][value="${v}"]`);
   if (el) el.checked = true;
 }
+function getModeFromRadios() {
+  const picked = document.querySelector('input[name="mode"]:checked');
+  const v = String(picked?.value || DEFAULT_MODE).toLowerCase();
+  return MODE_OPTIONS.includes(v) ? v : DEFAULT_MODE;
+}
+function setModeRadios(mode) {
+  const m = MODE_OPTIONS.includes(mode) ? mode : DEFAULT_MODE;
+  const el = document.querySelector(`input[name="mode"][value="${m}"]`);
+  if (el) el.checked = true;
+}
 function readConfigFromUI() {
   return {
     pieceCount: getPieceCountFromRadios(),
+    mode: getModeFromRadios(),
     seedStr: els.seedInput.value || "",
     showTimer: !!els.showTimerToggle.checked,
     relaxIters: FIXED_LLOYD_ITERS,
@@ -84,6 +99,7 @@ function readConfigFromUI() {
 function syncStartSettingsFromConfig() {
   if (!game.config) return;
   setPieceCountRadios(game.config.pieceCount ?? DEFAULT_PIECE_COUNT);
+  setModeRadios(game.config.mode ?? DEFAULT_MODE); 
   els.seedInput.value = game.config.seedStr ?? "";
   els.showTimerToggle.checked = !!game.config.showTimer;
 }
@@ -165,6 +181,13 @@ function updateHUD() {
     }
   }
 
+  if (els.modePill) {
+    const raw = String(game.config?.mode || "normal").trim().toLowerCase();
+    const modeName = (raw === "easy") ? "Easy" : (raw === "hard") ? "Hard" : "Normal";
+    els.modePill.textContent = `${modeName}`;
+    els.modePill.classList.toggle("done", game.state === STATE.FINISHED); // Done 后变绿
+  }
+
   els.timeText.classList.toggle("doneTime", game.state === STATE.FINISHED);
 }
 
@@ -187,6 +210,25 @@ function freezeElapsed() {
 function addPenalty(seconds) {
   game.elapsedMs += seconds * 1000;
   updateHUD();
+}
+
+let penaltyHideId = null;
+function showPenaltyHint(seconds) {
+  if (!els.penaltyHint) return;
+
+  els.penaltyHint.textContent = `+${seconds}s`;
+  els.penaltyHint.classList.remove("hidden");
+
+  // restart animation
+  els.penaltyHint.classList.remove("pop");
+  void els.penaltyHint.offsetWidth;
+  els.penaltyHint.classList.add("pop");
+
+  if (penaltyHideId) window.clearTimeout(penaltyHideId);
+  penaltyHideId = window.setTimeout(() => {
+    els.penaltyHint.classList.add("hidden");
+    els.penaltyHint.classList.remove("pop");
+  }, 650);
 }
 
 function buildBoard(config) {
@@ -354,6 +396,15 @@ function renderBoard(cells) {
   }
 }
 
+function applyHardTextRule() {
+  const hard = (game.config?.mode === "hard");
+  const hideAll = hard && game.state === STATE.PLAYING && game.current >= 1; // 仅游玩中隐藏
+  for (const [, t] of game.numToText) {
+    if (!t) continue;
+    t.style.display = hideAll ? "none" : "block";
+  }
+}
+
 function setCellsVisible(visible) {
   if (!game.cellsGroupEl) return;
   game.cellsGroupEl.style.display = visible ? "block" : "none";
@@ -378,6 +429,7 @@ function resetRunState(total) {
 
 function startNewGame(config) {
   game.config = config;
+  els.boardWrap.classList.toggle("mode-hard", config.mode === "hard");
   applyTimerVisibility();
 
   const userSeed = (config.seedStr || "").trim();
@@ -397,6 +449,7 @@ function startNewGame(config) {
   game.total = config.pieceCount; // ensure font uses correct N
   renderBoard(cells);
   resetRunState(config.pieceCount);
+  applyHardTextRule();
 
   game.state = STATE.PLAYING;
   setCellsVisible(true);
@@ -408,6 +461,7 @@ function finishGame() {
   freezeElapsed();
   stopTimer();
   game.state = STATE.FINISHED;
+  applyHardTextRule();
   updateHUD();
 }
 
@@ -466,6 +520,14 @@ function onCellClick(num) {
     game.next = num + 1;
     bannerLockUntil = 0;
 
+    // Easy: mark cell permanently
+    if (game.config?.mode === "easy" && polyEl) {
+      polyEl.classList.add("easyDone");
+    }
+
+    // Hard: after clicking 1, hide unfinished numbers; after each correct click, reveal only finished ones
+    applyHardTextRule();
+
     if (game.next > game.total) {
       finishGame();
       return;
@@ -480,6 +542,7 @@ function onCellClick(num) {
     flashWrong();
     showWrongHint();
     addPenalty(game.config.wrongPenaltySec);
+    showPenaltyHint(game.config.wrongPenaltySec);
   }
 }
 
