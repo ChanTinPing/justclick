@@ -67,6 +67,24 @@ body{
   background: linear-gradient(180deg, var(--btn2), var(--btn));
   box-shadow: 0 14px 35px rgba(44,125,255,0.25);
   transition: transform .08s ease, filter .15s ease;
+  margin-bottom: 34px;
+}
+.startSettings{
+  margin-top: 40px;
+  width: min(500px, calc(100vw - 28px));
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  padding: 14px;
+}
+.startSettingsTitle{
+  font-size: 14px;
+  font-weight: 1000;
+  letter-spacing: 0.3px;
+  margin: 2px 2px 12px;
+  color: rgba(11,27,58,0.85);
 }
 .startBtn:hover{ filter: brightness(1.05); }
 .startBtn:active{ transform: translateY(1px); }
@@ -141,22 +159,22 @@ body{
 }
 
 .settingGroup{
-  padding: 12px;
+  padding: 8px;
   border: 1px solid rgba(40,66,117,0.12);
-  border-radius: 14px;
+  border-radius: 12px;
   background: rgba(255,255,255,0.7);
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 .groupLabel{
   font-size: 13px;
   font-weight: 800;
   color: rgba(11,27,58,0.85);
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .choiceRow{
   display:flex;
-  gap: 10px;
+  gap: 6px;
 }
 .choice{
   flex: 1;

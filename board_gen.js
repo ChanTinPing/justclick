@@ -1,10 +1,19 @@
 "use strict";
 
 /**
- * board_gen.js (NEW)
- * - Hard partitions the square into 3 convex regions by two random parallel lines.
- * - In each region: generate non-uniform sites (NO rejection sampling), optional constrained Lloyd (default 1),
- *   then compute Voronoi and CLIP each cell to the region half-planes (so the two lines are HARD boundaries).
+ * board_gen.js (MOTIF + STRUCT ANCHORED FINALIZE)
+ *
+ * Key changes (per your spec):
+ *  - Introduce STRUCT sites as rule-based motifs (no jitter).
+ *  - STRUCT count is EXACTLY the sum of motif point counts.
+ *  - Motif plan (global, max 4 motifs; here 1/2/3 motifs):
+ *      * P=20: pick one motif type in {1,2,3}, place ONE motif in the largest macro region.
+ *      * P=50: TWO motifs: motif3 + (motif1 or motif2), placed in the two largest macro regions.
+ *      * P=100: pick one type in {1,2,3} globally, place THREE motifs (same type), one per macro region.
+ *  - STRUCT total <= floor(0.4*P) enforced by budgeted parameter sampling (no endless retries).
+ *  - Macro/Micro points are pushed out of motif "avoid zones" (no rejection).
+ *  - King bubble avoids moving STRUCT and never selects king from STRUCT.
+ *  - FINALIZE order: Lloyd relax (STRUCT anchored) -> enforceMinDistance (STRUCT anchored).
  *
  * Requires:
  *  1) d3-delaunay loaded (global d3.Delaunay)
@@ -12,11 +21,6 @@
  *
  * Exposes:
  *  window.JC.buildBoard(config, size) -> { cells }
- *
- * config:
- *  - seedStr: string
- *  - pieceCount: integer
- *  - relaxIters: optional int (default 1)   // constrained Lloyd inside each region
  */
 
 (function (global) {
@@ -37,12 +41,8 @@
   function clamp(v, lo, hi) {
     return Math.max(lo, Math.min(hi, v));
   }
-  function dot(ax, ay, bx, by) {
-    return ax * bx + ay * by;
-  }
 
   function polygonArea(poly) {
-    // unsigned area
     let a = 0;
     for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
       const [xi, yi] = poly[i];
@@ -53,9 +53,7 @@
   }
 
   function polygonCentroid(poly) {
-    let a = 0,
-      cx = 0,
-      cy = 0;
+    let a = 0, cx = 0, cy = 0;
     for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
       const [xi, yi] = poly[i];
       const [xj, yj] = poly[j];
@@ -72,7 +70,6 @@
   }
 
   function cleanD3Polygon(poly) {
-    // d3 Voronoi cellPolygon often repeats first vertex as last; remove it.
     if (!poly || poly.length < 3) return null;
     const cleaned = poly.slice();
     const first = cleaned[0];
@@ -90,18 +87,13 @@
   }
 
   function intersectSegPlane(s, e, plane) {
-    const sx = s[0],
-      sy = s[1];
-    const ex = e[0],
-      ey = e[1];
-    const dx = ex - sx,
-      dy = ey - sy;
+    const sx = s[0], sy = s[1];
+    const ex = e[0], ey = e[1];
+    const dx = ex - sx, dy = ey - sy;
 
     const denom = plane.a * dx + plane.b * dy;
-    if (Math.abs(denom) < 1e-12) {
-      // Segment nearly parallel; return s (best effort, deterministic).
-      return [sx, sy];
-    }
+    if (Math.abs(denom) < 1e-12) return [sx, sy];
+
     const t = (plane.c - (plane.a * sx + plane.b * sy)) / denom;
     const tt = clamp(t, 0, 1);
     return [sx + tt * dx, sy + tt * dy];
@@ -142,12 +134,11 @@
     return true;
   }
 
-  // If point is outside convex region, deterministically bring it inside by bisection
-  // along segment from an interior point.
+  // Deterministically bring point inside by bisection along segment from an interior point
   function clampToPlanesByBisection(p, insidePoint, planes) {
     if (isInsideAllPlanes(p, planes)) return p;
 
-    let lo = insidePoint; // guaranteed inside
+    let lo = insidePoint; // inside
     let hi = p;
 
     for (let i = 0; i < 32; i++) {
@@ -156,6 +147,28 @@
       else hi = mid;
     }
     return lo;
+  }
+
+  // Distance to each plane boundary (inside slack / ||n||), take min
+  function minPlaneDistance(p, planes) {
+    let best = Infinity;
+    for (const pl of planes) {
+      const denom = Math.hypot(pl.a, pl.b) || 1;
+      const slack = pl.c - (pl.a * p[0] + pl.b * p[1]); // inside means slack >= 0
+      const d = slack / denom;
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
+  // Move p toward insidePoint until minPlaneDistance >= margin (deterministic, no rejection)
+  function moveTowardInsideToSatisfyMargin(p, insidePoint, planes, margin) {
+    let q = p;
+    for (let i = 0; i < 28; i++) {
+      if (minPlaneDistance(q, planes) >= margin) return q;
+      q = [(q[0] + insidePoint[0]) * 0.5, (q[1] + insidePoint[1]) * 0.5];
+    }
+    return q;
   }
 
   // -------------------------
@@ -169,15 +182,13 @@
     const nx = Math.cos(theta);
     const ny = Math.sin(theta);
 
-    // project square corners onto n to get [minT, maxT]
     const corners = [
       [0, 0],
       [size, 0],
       [size, size],
       [0, size],
     ];
-    let minT = Infinity,
-      maxT = -Infinity;
+    let minT = Infinity, maxT = -Infinity;
     for (const [x, y] of corners) {
       const t = nx * x + ny * y;
       if (t < minT) minT = t;
@@ -185,19 +196,16 @@
     }
     const L = maxT - minT;
 
-    const minFrac = 0.18; // each region at least 18% of projection width
+    const minFrac = 0.18;
     const minW = minFrac * L;
-    const rem = L - 3 * minW; // guaranteed >=0 for minFrac < 1/3
+    const rem = L - 3 * minW;
 
     const eps = 1e-6;
-    const r0 = rand() + eps,
-      r1 = rand() + eps,
-      r2 = rand() + eps;
+    const r0 = rand() + eps, r1 = rand() + eps, r2 = rand() + eps;
     const rs = r0 + r1 + r2;
 
     const w0 = minW + (rem * r0) / rs;
     const w1 = minW + (rem * r1) / rs;
-    // w2 implied
 
     const t1 = minT + w0;
     const t2 = minT + w0 + w1;
@@ -206,12 +214,11 @@
   }
 
   function makeSquarePlanes(size) {
-    // a*x + b*y <= c
     return [
-      { a: -1, b: 0, c: 0 }, // x >= 0
-      { a: 1, b: 0, c: size }, // x <= size
-      { a: 0, b: -1, c: 0 }, // y >= 0
-      { a: 0, b: 1, c: size }, // y <= size
+      { a: -1, b: 0, c: 0 },       // x >= 0
+      { a: 1, b: 0, c: size },     // x <= size
+      { a: 0, b: -1, c: 0 },       // y >= 0
+      { a: 0, b: 1, c: size },     // y <= size
     ];
   }
 
@@ -219,17 +226,11 @@
     const sq = makeSquarePlanes(size);
     const { nx, ny, t1, t2 } = lines;
 
-    // left:  n·p <= t1
     const left = sq.concat([{ a: nx, b: ny, c: t1 }]);
-
-    // mid:   n·p >= t1  AND  n·p <= t2
-    //  n·p >= t1  <=>  (-n)·p <= -t1
     const mid = sq.concat([
       { a: -nx, b: -ny, c: -t1 },
       { a: nx, b: ny, c: t2 },
     ]);
-
-    // right: n·p >= t2  <=> (-n)·p <= -t2
     const right = sq.concat([{ a: -nx, b: -ny, c: -t2 }]);
 
     return { left, mid, right };
@@ -243,44 +244,37 @@
       [0, size],
     ];
     const poly = clipPolyByPlanes(square, planes);
-    if (!poly || poly.length < 3) {
-      // Should not happen given our min width guarantee; fallback to full square.
-      return square;
-    }
-    return poly;
+    return poly && poly.length >= 3 ? poly : square;
   }
 
   // -------------------------
-  // Convex polygon uniform sampling (triangulate fan at v0) - NO rejection
+  // Convex polygon uniform sampling (triangulate fan at v0)
   // -------------------------
   function triArea(a, b, c) {
-    const abx = b[0] - a[0],
-      aby = b[1] - a[1];
-    const acx = c[0] - a[0],
-      acy = c[1] - a[1];
+    const abx = b[0] - a[0], aby = b[1] - a[1];
+    const acx = c[0] - a[0], acy = c[1] - a[1];
     return Math.abs(abx * acy - aby * acx) * 0.5;
   }
 
   function samplePointInTriangle(a, b, c, rand) {
-    // barycentric with reflection (uniform)
     let r1 = rand();
     let r2 = rand();
     if (r1 + r2 > 1) {
       r1 = 1 - r1;
       r2 = 1 - r2;
     }
-    return [a[0] + r1 * (b[0] - a[0]) + r2 * (c[0] - a[0]), a[1] + r1 * (b[1] - a[1]) + r2 * (c[1] - a[1])];
+    return [
+      a[0] + r1 * (b[0] - a[0]) + r2 * (c[0] - a[0]),
+      a[1] + r1 * (b[1] - a[1]) + r2 * (c[1] - a[1]),
+    ];
   }
 
   function makeFanTriangles(poly) {
-    // poly is convex
     const v0 = poly[0];
     const tris = [];
     let total = 0;
     for (let i = 1; i + 1 < poly.length; i++) {
-      const a = v0,
-        b = poly[i],
-        c = poly[i + 1];
+      const a = v0, b = poly[i], c = poly[i + 1];
       const area = triArea(a, b, c);
       if (area > 1e-12) {
         tris.push({ a, b, c, area });
@@ -292,146 +286,131 @@
 
   function sampleUniformInConvexPoly(poly, triCache, rand) {
     const { tris, total } = triCache;
-    if (!tris.length || total <= 0) {
-      // degenerate; fallback to centroid
-      return polygonCentroid(poly);
-    }
+    if (!tris.length || total <= 0) return polygonCentroid(poly);
+
     let r = rand() * total;
     for (let i = 0; i < tris.length; i++) {
       const t = tris[i];
       r -= t.area;
-      if (r <= 0 || i === tris.length - 1) {
-        return samplePointInTriangle(t.a, t.b, t.c, rand);
-      }
+      if (r <= 0 || i === tris.length - 1) return samplePointInTriangle(t.a, t.b, t.c, rand);
     }
     return samplePointInTriangle(tris[0].a, tris[0].b, tris[0].c, rand);
   }
 
   // -------------------------
-  // Non-uniform sites in region (NO rejection)
-  // - macro: uniform points
-  // - micro: convex-combination pull toward random centers (guaranteed inside)
+  // Avoid-zones (soft constraint): push point out (NO rejection)
+  // zone: {cx, cy, r}
   // -------------------------
-  function generateRegionPoints(m, regionPoly, rand, params) {
-    if (m <= 0) return [];
+  function pushOutOfZones(p, zones, rand) {
+    if (!zones || zones.length === 0) return p;
 
-    const triCache = makeFanTriangles(regionPoly);
+    let x = p[0], y = p[1];
 
-    const microFrac = params.microFrac; // 0.65~0.8
-    const alpha = params.alpha; // 2.0~3.0
-    const macroCount = Math.max(1, Math.round(m * (1 - microFrac)));
-    const microCount = m - macroCount;
+    // one pass is usually enough because zones are placed with clearance
+    for (let t = 0; t < zones.length; t++) {
+      const z = zones[t];
+      const dx = x - z.cx;
+      const dy = y - z.cy;
+      const d = Math.hypot(dx, dy);
 
-    const pts = [];
-
-    // macro: uniform in region
-    for (let i = 0; i < macroCount; i++) {
-      pts.push(sampleUniformInConvexPoly(regionPoly, triCache, rand));
-    }
-
-    // centers for micro
-    const K = 2 + Math.floor(rand() * 2); // 2..4
-    const centers = [];
-    const kUse = Math.min(K, Math.max(1, macroCount)); // 保持你原来的安全逻辑:contentReference[oaicite:2]{index=2}
-
-    // 1) 候选池：多采一些均匀点（不算拒绝采样，因为 sampleUniform... 是直接采样）:contentReference[oaicite:3]{index=3}
-    const candN = Math.max(32, kUse * 16);
-    const candidates = [];
-    for (let t = 0; t < candN; t++) {
-      candidates.push(sampleUniformInConvexPoly(regionPoly, triCache, rand));
-    }
-
-    // 2) 第一个 center：随机从候选里取
-    let idx0 = Math.floor(rand() * candidates.length);
-    centers.push(candidates[idx0]);
-    candidates.splice(idx0, 1);
-
-    // 3) 后续：每次选“到已选 centers 的最近距离”最大的点（maximin）
-    for (let k = 1; k < kUse; k++) {
-      let bestIdx = 0;
-      let bestScore = -1;
-
-      for (let i = 0; i < candidates.length; i++) {
-        const p = candidates[i];
-
-        let minD2 = Infinity;
-        for (let s = 0; s < centers.length; s++) {
-          const dx = p[0] - centers[s][0];
-          const dy = p[1] - centers[s][1];
-          const d2 = dx * dx + dy * dy;
-          if (d2 < minD2) minD2 = d2;
+      if (d < z.r) {
+        // deterministic direction if extremely close
+        let ux, uy;
+        if (d < 1e-9) {
+          const ang = rand() * Math.PI * 2;
+          ux = Math.cos(ang);
+          uy = Math.sin(ang);
+        } else {
+          ux = dx / d;
+          uy = dy / d;
         }
-
-        // 小噪声打破完全平局，避免“总选最早的”带来微小结构
-        const score = minD2 + 1e-12 * rand();
-        if (score > bestScore) {
-          bestScore = score;
-          bestIdx = i;
-        }
+        const rr = z.r + 1e-6;
+        x = z.cx + ux * rr;
+        y = z.cy + uy * rr;
       }
-
-      centers.push(candidates[bestIdx]);
-      candidates.splice(bestIdx, 1);
     }
 
-
-    // micro: pull toward centers via convex combination
-    for (let i = 0; i < microCount; i++) {
-      const p = sampleUniformInConvexPoly(regionPoly, triCache, rand);
-      const c = centers[Math.floor(rand() * centers.length)];
-      const lam = Math.pow(rand(), alpha); // in [0,1], skewed to 0 => closer to center
-      const qx = c[0] + lam * (p[0] - c[0]);
-      const qy = c[1] + lam * (p[1] - c[1]);
-      pts.push([qx, qy]);
-    }
-
-    return pts;
+    return [x, y];
   }
 
-  function nudgeDuplicatesWithinPlanes(points, planes, insidePoint, rand) {
-    const seen = new Set();
+  // -------------------------
+  // Duplicate nudging (skip fixed points)
+  // -------------------------
+  function nudgeDuplicatesWithinPlanes(points, planes, insidePoint, rand, fixedMask) {
+    const seen = new Map(); // key -> first index
     for (let i = 0; i < points.length; i++) {
       let [x, y] = points[i];
       let key = `${Math.round(x * 1000)}_${Math.round(y * 1000)}`;
-      let tries = 0;
 
-      while (seen.has(key) && tries < 24) {
-        // small deterministic jitter
-        x = x + (rand() - 0.5) * 0.8;
-        y = y + (rand() - 0.5) * 0.8;
-        const clamped = clampToPlanesByBisection([x, y], insidePoint, planes);
-        x = clamped[0];
-        y = clamped[1];
-        key = `${Math.round(x * 1000)}_${Math.round(y * 1000)}`;
+      if (!seen.has(key)) {
+        seen.set(key, i);
+        continue;
+      }
+
+      // If current is fixed, try to move the earlier non-fixed one (best effort)
+      const j = seen.get(key);
+      const iFixed = fixedMask ? !!fixedMask[i] : false;
+      const jFixed = fixedMask ? !!fixedMask[j] : false;
+
+      // Choose which index to nudge: prefer non-fixed
+      let k = i;
+      if (iFixed && !jFixed) k = j;
+      else if (iFixed && jFixed) {
+        // both fixed; leave them (should be extremely rare for motifs)
+        continue;
+      }
+
+      let tries = 0;
+      let px = points[k][0], py = points[k][1];
+      let kkey = `${Math.round(px * 1000)}_${Math.round(py * 1000)}`;
+
+      while (seen.has(kkey) && tries < 24) {
+        px = px + (rand() - 0.5) * 0.8;
+        py = py + (rand() - 0.5) * 0.8;
+        const clamped = clampToPlanesByBisection([px, py], insidePoint, planes);
+        px = clamped[0];
+        py = clamped[1];
+        kkey = `${Math.round(px * 1000)}_${Math.round(py * 1000)}`;
         tries++;
       }
 
-      points[i] = [x, y];
-      seen.add(key);
+      points[k] = [px, py];
+      seen.set(kkey, k);
     }
     return points;
   }
 
-  function enforceMinDistance(points, minDist, planes, insidePoint, rand) {
+  // -------------------------
+  // Min-distance enforcement (FINAL GUARANTEE)
+  // - ALL points participate (including STRUCT/motif).
+  // - Avoid-zones are soft and only applied to NON-STRUCT points.
+  // - IMPORTANT: the LAST operation is a pure minDist sweep (no zones, no nudge),
+  //   so the returned points satisfy minDist much more reliably.
+  // -------------------------
+  function enforceMinDistanceAnchored(points, fixedMask, minDist, planes, insidePoint, zones, rand) {
     const n = points.length;
     if (n <= 1 || !(minDist > 0)) return points;
 
     const min2 = minDist * minDist;
-    const passes = 5; // 固定次数：更大更“硬”，也更慢；N=100 这点完全OK
+    const passes = 5;
 
-    for (let pass = 0; pass < passes; pass++) {
+    function clampIn(p) {
+      return clampToPlanesByBisection(p, insidePoint, planes);
+    }
+
+    // One sweep of pairwise separation; optionally apply zones for NON-STRUCT points.
+    function separationSweep(applyZones) {
       for (let i = 0; i < n; i++) {
         let pi = points[i];
+
         for (let j = i + 1; j < n; j++) {
           let pj = points[j];
 
           let dx = pj[0] - pi[0];
           let dy = pj[1] - pi[1];
           let d2 = dx * dx + dy * dy;
-
           if (d2 >= min2) continue;
 
-          // 如果两个点几乎重合，用确定性的随机方向拆开（seeded rand）
           let d = Math.sqrt(d2);
           let ux, uy;
           if (d < 1e-9) {
@@ -444,41 +423,129 @@
             uy = dy / d;
           }
 
-          const push = (minDist - d) * 0.5;
+          const need = (minDist - d);
+          const push = need * 0.5;
 
-          // 分别推开
-          let aix = pi[0] - ux * push;
-          let aiy = pi[1] - uy * push;
-          let ajx = pj[0] + ux * push;
-          let ajy = pj[1] + uy * push;
+          let ai = [pi[0] - ux * push, pi[1] - uy * push];
+          let aj = [pj[0] + ux * push, pj[1] + uy * push];
 
-          // 保证仍在凸区域内（确定性二分 clamp）
-          const ai = clampToPlanesByBisection([aix, aiy], insidePoint, planes);
-          const aj = clampToPlanesByBisection([ajx, ajy], insidePoint, planes);
+          ai = clampIn(ai);
+          aj = clampIn(aj);
 
-          pi = points[i] = ai;
+          if (applyZones && zones && zones.length) {
+            if (!(fixedMask && fixedMask[i])) {
+              ai = pushOutOfZones(ai, zones, rand);
+              ai = clampIn(ai);
+            }
+            if (!(fixedMask && fixedMask[j])) {
+              aj = pushOutOfZones(aj, zones, rand);
+              aj = clampIn(aj);
+            }
+          }
+
+          points[i] = ai;
           points[j] = aj;
+          pi = ai;
+          pj = aj;
+        }
+      }
+    }
+
+    // Main passes: zones first (soft), then separation, then de-dup.
+    for (let pass = 0; pass < passes; pass++) {
+      // Soft zones: keep NON-STRUCT out before separation (can help stability)
+      if (zones && zones.length) {
+        for (let i = 0; i < n; i++) {
+          if (fixedMask && fixedMask[i]) continue;
+          let q = pushOutOfZones(points[i], zones, rand);
+          q = clampIn(q);
+          points[i] = q;
         }
       }
 
-      // 每一轮做一次轻微去重，避免推挤后又贴得太死
-      nudgeDuplicatesWithinPlanes(points, planes, insidePoint, rand);
+      separationSweep(false);
+
+      // De-dup: allow ALL points to move; this might break minDist temporarily,
+      // so we will fix it in later sweeps and in the final guarantee sweeps.
+      nudgeDuplicatesWithinPlanes(points, planes, insidePoint, rand, null);
+
+      // After de-dup, do a separation sweep again (still not final guarantee)
+      separationSweep(false);
     }
+
+    // FINAL GUARANTEE: last operations are pure separation sweeps
+    // (no zones, no de-dup) so returned points are not modified afterwards.
+    separationSweep(false);
+    separationSweep(false);
 
     return points;
   }
 
+
+
   function minDistFromArea(area, m, factor) {
     if (m <= 1) return 0;
-    const avg = Math.sqrt(area / m);     // 平均“线性尺度”
-    return factor * avg;                  // 系数越大，下界越高（建议 0.52~0.60）
+    const avg = Math.sqrt(area / m);
+    return factor * avg;
   }
 
+  // -------------------------
+  // King bubble (STRUCT anchored; king never from STRUCT)
+  // -------------------------
+  function applyKingBubbleAnchored(points, fixedMask, planes, insidePoint, regionArea, strength, zones, rand) {
+    const n = points.length;
+    if (n < 6) return points;
+
+    // pick king index among FREE points
+    const freeIdx = [];
+    for (let i = 0; i < n; i++) if (!(fixedMask && fixedMask[i])) freeIdx.push(i);
+    if (freeIdx.length === 0) return points;
+
+    const kingIdx = freeIdx[Math.floor(rand() * freeIdx.length)];
+    const king = points[kingIdx];
+
+    const avg = Math.sqrt(regionArea / n);
+    const R = avg * strength;
+    const keep = 0.85;
+
+    for (let i = 0; i < n; i++) {
+      if (i === kingIdx) continue;
+      if (fixedMask && fixedMask[i]) continue; // do not move STRUCT
+
+      const p = points[i];
+      let dx = p[0] - king[0];
+      let dy = p[1] - king[1];
+      let d = Math.hypot(dx, dy);
+
+      if (d < 1e-9) {
+        const ang = rand() * Math.PI * 2;
+        let np = [king[0] + Math.cos(ang) * R, king[1] + Math.sin(ang) * R];
+        np = clampToPlanesByBisection(np, insidePoint, planes);
+        np = pushOutOfZones(np, zones, rand);
+        np = clampToPlanesByBisection(np, insidePoint, planes);
+        points[i] = np;
+        continue;
+      }
+
+      if (d < R) {
+        const ux = dx / d, uy = dy / d;
+        const newD = d + (R - d) * keep;
+        let np = [king[0] + ux * newD, king[1] + uy * newD];
+        np = clampToPlanesByBisection(np, insidePoint, planes);
+        np = pushOutOfZones(np, zones, rand);
+        np = clampToPlanesByBisection(np, insidePoint, planes);
+        points[i] = np;
+      }
+    }
+
+    nudgeDuplicatesWithinPlanes(points, planes, insidePoint, rand, fixedMask);
+    return points;
+  }
 
   // -------------------------
-  // Constrained Lloyd in a region (cell clipped by region planes)
+  // Constrained Lloyd in a region (STRUCT anchored)
   // -------------------------
-  function lloydRelaxInRegion(points, size, iters, regionPlanes, regionInsidePoint, rand) {
+  function lloydRelaxInRegionAnchored(points, fixedMask, size, iters, regionPlanes, regionInsidePoint, zones, rand) {
     let pts = points;
     for (let t = 0; t < iters; t++) {
       const delaunay = d3.Delaunay.from(pts);
@@ -486,6 +553,11 @@
 
       const nextPts = [];
       for (let i = 0; i < pts.length; i++) {
+        if (fixedMask && fixedMask[i]) {
+          nextPts.push(pts[i]); // keep STRUCT
+          continue;
+        }
+
         const raw = voronoi.cellPolygon(i);
         const cleaned = cleanD3Polygon(raw);
         if (!cleaned || cleaned.length < 3) {
@@ -499,22 +571,35 @@
           continue;
         }
 
-        const c = polygonCentroid(clipped);
+        let c = polygonCentroid(clipped);
         if (!Number.isFinite(c[0]) || !Number.isFinite(c[1])) {
           nextPts.push(pts[i]);
           continue;
         }
-        // centroid should already be inside, but clamp deterministically just in case.
-        nextPts.push(clampToPlanesByBisection(c, regionInsidePoint, regionPlanes));
+
+        c = clampToPlanesByBisection(c, regionInsidePoint, regionPlanes);
+        c = pushOutOfZones(c, zones, rand);
+        c = clampToPlanesByBisection(c, regionInsidePoint, regionPlanes);
+        nextPts.push(c);
       }
 
-      pts = nudgeDuplicatesWithinPlanes(nextPts, regionPlanes, regionInsidePoint, rand);
+      pts = nudgeDuplicatesWithinPlanes(nextPts, regionPlanes, regionInsidePoint, rand, fixedMask);
+
+      // keep free points out of zones (soft)
+      if (zones && zones.length) {
+        for (let i = 0; i < pts.length; i++) {
+          if (fixedMask && fixedMask[i]) continue;
+          let q = pushOutOfZones(pts[i], zones, rand);
+          q = clampToPlanesByBisection(q, regionInsidePoint, regionPlanes);
+          pts[i] = q;
+        }
+      }
     }
     return pts;
   }
 
   // -------------------------
-  // Build region cells (Voronoi + hard clip)
+  // Voronoi cells with hard clip
   // -------------------------
   function makeFallbackTriangle(pt, size) {
     const [x, y] = pt;
@@ -526,7 +611,7 @@
     ];
   }
 
-  function buildCellsForRegion(points, size, regionPlanes, rand) {
+  function buildCellsForRegion(points, size, regionPlanes) {
     const delaunay = d3.Delaunay.from(points);
     const voronoi = delaunay.voronoi([0, 0, size, size]);
 
@@ -535,27 +620,22 @@
       const raw = voronoi.cellPolygon(i);
       let cleaned = cleanD3Polygon(raw);
 
-      if (!cleaned || cleaned.length < 3) {
-        cleaned = makeFallbackTriangle(points[i], size);
-      }
+      if (!cleaned || cleaned.length < 3) cleaned = makeFallbackTriangle(points[i], size);
 
       let clipped = clipPolyByPlanes(cleaned, regionPlanes);
       if (!clipped || clipped.length < 3) {
-        // Best-effort fallback: clip fallback triangle
         const fb = makeFallbackTriangle(points[i], size);
         clipped = clipPolyByPlanes(fb, regionPlanes) || fb;
       }
 
-      // Still ensure numeric sanity
       if (!clipped || clipped.length < 3) {
         const [x, y] = points[i];
-        const fb2 = [
+        clipped = [
           [clamp(x - 1, 0, size), clamp(y - 1, 0, size)],
           [clamp(x + 1, 0, size), clamp(y - 1, 0, size)],
           [clamp(x + 1, 0, size), clamp(y + 1, 0, size)],
           [clamp(x - 1, 0, size), clamp(y + 1, 0, size)],
         ];
-        clipped = fb2;
       }
 
       cells.push({
@@ -569,8 +649,8 @@
   // -------------------------
   // Piece allocation by region area (with minimum 1 each when possible)
   // -------------------------
-  function allocateByArea(totalN, areas, rand) {
-    const keys = Object.keys(areas); // ["left","mid","right"]
+  function allocateByArea(totalN, areas) {
+    const keys = Object.keys(areas);
     const sumA = keys.reduce((s, k) => s + areas[k], 0);
 
     if (totalN <= 0) return { left: 0, mid: 0, right: 0 };
@@ -580,14 +660,12 @@
     const baseMin = 1;
     let remain = totalN - 3 * baseMin;
 
-    const raw = {};
     const base = { left: baseMin, mid: baseMin, right: baseMin };
     const frac = [];
 
     for (const k of keys) {
       const x = (remain * areas[k]) / (sumA || 1);
       const f = Math.floor(x);
-      raw[k] = x;
       base[k] += f;
       frac.push({ k, r: x - f });
     }
@@ -595,7 +673,6 @@
     let used = base.left + base.mid + base.right;
     let extra = totalN - used;
 
-    // distribute remainder to largest fractional parts; stable tie-breaker with rand
     frac.sort((p, q) => q.r - p.r);
     let idx = 0;
     while (extra > 0) {
@@ -605,22 +682,283 @@
       idx++;
     }
 
-    // if somehow over (shouldn't), take from largest area region first while >=1
     while (base.left + base.mid + base.right > totalN) {
+      // take from the currently largest region if possible
       let k = "mid";
       if (areas.left >= areas.mid && areas.left >= areas.right) k = "left";
       else if (areas.right >= areas.left && areas.right >= areas.mid) k = "right";
       if (base[k] > 1) base[k] -= 1;
-      else {
-        // fallback: remove from any region >1
-        if (base.mid > 1) base.mid -= 1;
-        else if (base.left > 1) base.left -= 1;
-        else if (base.right > 1) base.right -= 1;
-        else break;
-      }
+      else if (base.mid > 1) base.mid -= 1;
+      else if (base.left > 1) base.left -= 1;
+      else if (base.right > 1) base.right -= 1;
+      else break;
     }
 
     return base;
+  }
+
+  // -------------------------
+  // Motifs: type 1/2/3
+  //  1: regular n-gon (n in [3,8])
+  //  2: regular n-gon + center (n in [3,8]) => n+1 points
+  //  3: k x n grid (k in {1,2,3}, n in [3,5]) => k*n points
+  // No jitter.
+  // -------------------------
+  function motifMinPoints(type) {
+    if (type === 1) return 3;
+    if (type === 2) return 4;
+    return 3; // type 3
+  }
+
+  function chooseMotifParam(type, maxPoints, rand) {
+    // returns {count, ...params} with count <= maxPoints and >= min
+    if (type === 1) {
+      const feasible = [];
+      for (let n = 3; n <= 8; n++) if (n <= maxPoints) feasible.push(n);
+      const n = feasible.length ? feasible[Math.floor(rand() * feasible.length)] : 3;
+      return { type, n, count: n };
+    }
+    if (type === 2) {
+      const feasible = [];
+      for (let n = 3; n <= 8; n++) if (n + 1 <= maxPoints) feasible.push(n);
+      const n = feasible.length ? feasible[Math.floor(rand() * feasible.length)] : 3;
+      return { type, n, count: n + 1 };
+    }
+    // type 3
+    const feasible = [];
+    for (let k = 1; k <= 3; k++) {
+      for (let n = 3; n <= 5; n++) {
+        const c = k * n;
+        if (c <= maxPoints) feasible.push({ k, n, c });
+      }
+    }
+    if (!feasible.length) return { type, k: 1, n: 3, count: 3 };
+    const pick = feasible[Math.floor(rand() * feasible.length)];
+    return { type, k: pick.k, n: pick.n, count: pick.c };
+  }
+
+  // Create motif points and avoid zone in a region
+  function buildMotifInRegion(region, motifParam, rand) {
+    const { planes, inside, poly, triCache, area, allocN } = region;
+    const avg = Math.sqrt(area / Math.max(1, allocN));
+
+    const extra = avg * 0.9;          // clearance to boundary
+    const avoidMargin = avg * 1.15;   // push-away ring for macro/micro
+
+    // pick a random center, then deterministically move inward to satisfy margin
+    let c = sampleUniformInConvexPoly(poly, triCache, rand);
+    c = clampToPlanesByBisection(c, inside, planes);
+
+    let extentTarget = avg * 2.6;
+    if (motifParam.type === 1 || motifParam.type === 2) {
+      // larger n -> a bit larger extent
+      extentTarget = avg * (2.4 + 0.12 * (motifParam.n - 3));
+    } else {
+      // grid: extent depends on k,n and spacing
+      // initial spacing target
+      const spacingTarget = avg * 1.45;
+      const halfW = spacingTarget * (motifParam.n - 1) * 0.5;
+      const halfH = spacingTarget * (motifParam.k - 1) * 0.5;
+      extentTarget = Math.hypot(halfW, halfH);
+    }
+
+    // enforce boundary clearance by moving center inward (no retry)
+    c = moveTowardInsideToSatisfyMargin(c, inside, planes, extentTarget + extra);
+
+    // compute allowed extent at this center (may need shrink)
+    const allow = Math.max(0, minPlaneDistance(c, planes) - extra);
+    const extent = Math.min(extentTarget, allow > 1e-6 ? allow : extentTarget * 0.6);
+
+    const phi = rand() * Math.PI * 2;
+
+    const pts = [];
+    let motifExtent = extent;
+
+    if (motifParam.type === 1 || motifParam.type === 2) {
+      // regular n-gon on circle of radius=extent
+      const n = motifParam.n;
+      const r = extent;
+      motifExtent = r;
+
+      for (let i = 0; i < n; i++) {
+        const ang = phi + (2 * Math.PI * i) / n;
+        const x = c[0] + Math.cos(ang) * r;
+        const y = c[1] + Math.sin(ang) * r;
+        const q = clampToPlanesByBisection([x, y], inside, planes);
+        pts.push(q);
+      }
+      if (motifParam.type === 2) {
+        pts.push([c[0], c[1]]);
+      }
+    } else {
+      // grid k x n with spacing (scaled to match extent)
+      const k = motifParam.k;
+      const n = motifParam.n;
+
+      const spacingTarget = avg * 1.45;
+      const halfW0 = spacingTarget * (n - 1) * 0.5;
+      const halfH0 = spacingTarget * (k - 1) * 0.5;
+      const extent0 = Math.hypot(halfW0, halfH0) || 1;
+
+      const scale = clamp(extent / extent0, 0.5, 1.0);
+      const spacing = spacingTarget * scale;
+
+      const cos = Math.cos(phi);
+      const sin = Math.sin(phi);
+
+      const x0 = -(n - 1) * 0.5 * spacing;
+      const y0 = -(k - 1) * 0.5 * spacing;
+
+      let maxR = 0;
+
+      for (let row = 0; row < k; row++) {
+        for (let col = 0; col < n; col++) {
+          const lx = x0 + col * spacing;
+          const ly = y0 + row * spacing;
+          const rx = lx * cos - ly * sin;
+          const ry = lx * sin + ly * cos;
+          const x = c[0] + rx;
+          const y = c[1] + ry;
+          const q = clampToPlanesByBisection([x, y], inside, planes);
+          pts.push(q);
+          maxR = Math.max(maxR, Math.hypot(rx, ry));
+        }
+      }
+      motifExtent = maxR;
+    }
+
+    // avoid zone for macro/micro
+    const zone = { cx: c[0], cy: c[1], r: motifExtent + avoidMargin };
+
+    return { structPts: pts, avoidZone: zone };
+  }
+
+  // -------------------------
+  // Generate macro/micro (counts are explicit; avoid zones; no rejection)
+  // -------------------------
+  function pickCentersMaximin(candidates, kUse, rand) {
+    if (kUse <= 1) return [candidates[Math.floor(rand() * candidates.length)]];
+
+    const cand = candidates.slice();
+    const centers = [];
+
+    // first center random
+    let idx0 = Math.floor(rand() * cand.length);
+    centers.push(cand[idx0]);
+    cand.splice(idx0, 1);
+
+    for (let k = 1; k < kUse; k++) {
+      let bestIdx = 0;
+      let bestScore = -1;
+
+      for (let i = 0; i < cand.length; i++) {
+        const p = cand[i];
+        let minD2 = Infinity;
+        for (let s = 0; s < centers.length; s++) {
+          const dx = p[0] - centers[s][0];
+          const dy = p[1] - centers[s][1];
+          const d2 = dx * dx + dy * dy;
+          if (d2 < minD2) minD2 = d2;
+        }
+        const score = minD2 + 1e-12 * rand();
+        if (score > bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
+      }
+
+      centers.push(cand[bestIdx]);
+      cand.splice(bestIdx, 1);
+      if (cand.length === 0) break;
+    }
+
+    return centers;
+  }
+
+  function generateNonStructPoints(macroCount, microCount, region, zones, rand, params) {
+    const { poly, triCache, planes, inside } = region;
+
+    const ptsMacro = [];
+    for (let i = 0; i < macroCount; i++) {
+      let p = sampleUniformInConvexPoly(poly, triCache, rand);
+      p = pushOutOfZones(p, zones, rand);
+      p = clampToPlanesByBisection(p, inside, planes);
+      ptsMacro.push(p);
+    }
+
+    // micro centers: from a fresh candidate pool (better spread, no rejection)
+    const K = clamp(2 + Math.floor(rand() * 3), 2, 4); // 2..4
+    const kUse = Math.min(K, Math.max(1, macroCount || 1));
+
+    const candN = Math.max(32, kUse * 16);
+    const candidates = [];
+    for (let t = 0; t < candN; t++) {
+      let p = sampleUniformInConvexPoly(poly, triCache, rand);
+      p = pushOutOfZones(p, zones, rand);
+      p = clampToPlanesByBisection(p, inside, planes);
+      candidates.push(p);
+    }
+    const centers = pickCentersMaximin(candidates, kUse, rand);
+
+    const pts = [];
+    // include macros first
+    for (const p of ptsMacro) pts.push(p);
+
+    // micros
+    for (let i = 0; i < microCount; i++) {
+      let p = sampleUniformInConvexPoly(poly, triCache, rand);
+      p = clampToPlanesByBisection(p, inside, planes);
+
+      const c = centers[Math.floor(rand() * centers.length)];
+      const lam = Math.pow(rand(), params.alpha); // skew toward 0 -> closer to center
+      let q = [c[0] + lam * (p[0] - c[0]), c[1] + lam * (p[1] - c[1])];
+
+      q = pushOutOfZones(q, zones, rand);
+      q = clampToPlanesByBisection(q, inside, planes);
+      pts.push(q);
+    }
+
+    return pts;
+  }
+
+  // -------------------------
+  // Build motif plan (global) per your rules
+  // -------------------------
+  function pickMotifType123(rand) {
+    const r = Math.floor(rand() * 3); // 0,1,2
+    return r === 0 ? 1 : (r === 1 ? 2 : 3);
+  }
+
+  function buildMotifPlan(pieceCount, rand) {
+    const P = pieceCount;
+
+    if (P === 20) {
+      return [{ type: pickMotifType123(rand) }]; // one motif
+    }
+    if (P === 50) {
+      return [
+        { type: 3 }, // must include motif3
+        { type: rand() < 0.5 ? 1 : 2 },
+      ];
+    }
+    if (P === 100) {
+      // You asked: for 100 pieces, ALWAYS use motif types 1,2,3 exactly once each.
+      // Shuffle so the mapping to macro regions depends on the seed.
+      const types = [1, 2, 3];
+      for (let i = types.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        const tmp = types[i];
+        types[i] = types[j];
+        types[j] = tmp;
+      }
+      return types.map((t) => ({ type: t }));
+    }
+
+    // Fallback (shouldn't happen with your UI):
+    if (P <= 30) return [{ type: pickMotifType123(rand) }];
+    if (P <= 70) return [{ type: 3 }, { type: rand() < 0.5 ? 1 : 2 }];
+    const t = pickMotifType123(rand);
+    return [{ type: t }, { type: t }, { type: t }];
   }
 
   // -------------------------
@@ -630,22 +968,28 @@
     const { rand } = makeRng(config.seedStr);
     const N = Math.max(1, config.pieceCount | 0);
 
-    // parameters (tuned to reduce spiderweb yet keep non-uniform)
-    const params = {
-      microFrac: 0.7, // 0.65~0.8
-      alpha: 3, // 2.0~3.0
-    };
-    const minDistFactor = 0.6
-
+    // FINALIZE config
     const relaxIters =
       typeof config.relaxIters === "number" && Number.isFinite(config.relaxIters)
         ? Math.max(0, config.relaxIters | 0)
-        : 1; // default 1 (constrained Lloyd per region)
+        : 1;
+
+    // non-struct micro behavior (higher micro ratio per your request)
+    const params = {
+      microFrac: 0.88, // used for non-struct remainder
+      alpha: 3.0,
+    };
+
+    // min distance (final pass)
+    const minDistFactor = 0.6;
+
+    // king bubble (before finalize)
+    const kingStrength = 2.2;
 
     // 1) parallel lines
     const lines = generateParallelLines(size, rand);
 
-    // 2) region planes and region polygons (for sampling + centroid)
+    // 2) region planes and polygons
     const planes = makeRegionPlanes(size, lines);
 
     const polyL = regionPolyFromPlanes(size, planes.left);
@@ -656,48 +1000,146 @@
     const areaM = polygonArea(polyM);
     const areaR = polygonArea(polyR);
 
-    // 3) allocate piece counts by region area (hardly ever 0 because we enforce min width)
-    const alloc = allocateByArea(N, { left: areaL, mid: areaM, right: areaR }, rand);
-
-    // 4) generate sites per region (NO rejection)
     const insideL = polygonCentroid(polyL);
     const insideM = polygonCentroid(polyM);
     const insideR = polygonCentroid(polyR);
 
-    let ptsL = generateRegionPoints(alloc.left, polyL, rand, params);
-    let ptsM = generateRegionPoints(alloc.mid, polyM, rand, params);
-    let ptsR = generateRegionPoints(alloc.right, polyR, rand, params);
+    // 3) allocate piece counts by region area
+    const alloc = allocateByArea(N, { left: areaL, mid: areaM, right: areaR });
 
-    // ensure sites inside via deterministic clamp (numerical safety)
-    ptsL = ptsL.map((p) => clampToPlanesByBisection(p, insideL, planes.left));
-    ptsM = ptsM.map((p) => clampToPlanesByBisection(p, insideM, planes.mid));
-    ptsR = ptsR.map((p) => clampToPlanesByBisection(p, insideR, planes.right));
+    // region descriptors
+    const regionL = {
+      key: "left", planes: planes.left, poly: polyL, inside: insideL, area: areaL,
+      triCache: makeFanTriangles(polyL), allocN: alloc.left,
+    };
+    const regionM = {
+      key: "mid", planes: planes.mid, poly: polyM, inside: insideM, area: areaM,
+      triCache: makeFanTriangles(polyM), allocN: alloc.mid,
+    };
+    const regionR = {
+      key: "right", planes: planes.right, poly: polyR, inside: insideR, area: areaR,
+      triCache: makeFanTriangles(polyR), allocN: alloc.right,
+    };
 
-    ptsL = nudgeDuplicatesWithinPlanes(ptsL, planes.left, insideL, rand);
-    ptsM = nudgeDuplicatesWithinPlanes(ptsM, planes.mid, insideM, rand);
-    ptsR = nudgeDuplicatesWithinPlanes(ptsR, planes.right, insideR, rand);
+    const regions = [regionL, regionM, regionR];
 
-    // enforce a hard minimum distance to reduce tiny cells (esp. pieceCount=100)
-    ptsL = enforceMinDistance(ptsL, minDistFromArea(areaL, ptsL.length, minDistFactor), planes.left, insideL, rand);
-    ptsM = enforceMinDistance(ptsM, minDistFromArea(areaM, ptsM.length, minDistFactor), planes.mid, insideM, rand);
-    ptsR = enforceMinDistance(ptsR, minDistFromArea(areaR, ptsR.length, minDistFactor), planes.right, insideR, rand);
+    // 4) motif plan (global)
+    const motifPlan = buildMotifPlan(N, rand);
 
-    // 5) optional constrained Lloyd to reduce spiderweb thin edges
-    if (relaxIters > 0) {
-      ptsL = lloydRelaxInRegion(ptsL, size, relaxIters, planes.left, insideL, rand);
-      ptsM = lloydRelaxInRegion(ptsM, size, relaxIters, planes.mid, insideM, rand);
-      ptsR = lloydRelaxInRegion(ptsR, size, relaxIters, planes.right, insideR, rand);
+    // decide which regions receive motifs (by area rank)
+    const byArea = regions.slice().sort((a, b) => b.area - a.area);
+
+    // For P=20: 1 motif -> largest region
+    // For P=50: 2 motifs -> largest and 2nd largest
+    // For P=100: 3 motifs -> each region (largest,2nd,3rd) (same type)
+    const targetRegions = byArea.slice(0, Math.min(motifPlan.length, 3));
+
+    // 5) Determine motif params with global budget S <= floor(0.4N), respecting per-region capacity
+    const Smax = Math.floor(0.4 * N);
+    let usedS = 0;
+
+    // storage per region
+    const regionStruct = { left: [], mid: [], right: [] };
+    const regionZones = { left: [], mid: [], right: [] };
+
+    // sequential budgeted assignment: each target region gets exactly one motif
+    for (let i = 0; i < motifPlan.length; i++) {
+      const type = motifPlan[i].type;
+      const reg = targetRegions[i];
+      if (!reg) break;
+
+      const minP = motifMinPoints(type);
+
+      // reserve minimal points for remaining motifs
+      let minRemain = 0;
+      for (let j = i + 1; j < motifPlan.length; j++) minRemain += motifMinPoints(motifPlan[j].type);
+
+      // per-region capacity: do not exceed allocN; try to keep at least a tiny remainder if possible
+      const cap = Math.max(0, reg.allocN | 0);
+      const leave = Math.min(2, Math.max(0, cap - minP)); // leave up to 2 non-struct points if possible
+      const capMax = Math.max(minP, cap - leave);
+
+      const budgetMax = Math.max(minP, Smax - usedS - minRemain);
+      const maxPoints = Math.min(capMax, budgetMax);
+
+      const param = chooseMotifParam(type, maxPoints, rand);
+      usedS += param.count;
+
+      const built = buildMotifInRegion(reg, param, rand);
+      regionStruct[reg.key] = built.structPts;
+      regionZones[reg.key].push(built.avoidZone);
     }
 
-    // 6) build clipped cells for each region (hard boundary)
-    const cellsL = buildCellsForRegion(ptsL, size, planes.left, rand);
-    const cellsM = buildCellsForRegion(ptsM, size, planes.mid, rand);
-    const cellsR = buildCellsForRegion(ptsR, size, planes.right, rand);
+    // 6) Build points per region: STRUCT first, then macro/micro on remainder
+    function buildRegionPoints(region) {
+      const key = region.key;
+      const structPts = regionStruct[key] || [];
+      const S = structPts.length;
+      const m = Math.max(0, region.allocN | 0);
+      const zones = regionZones[key] || [];
+
+      const remain = Math.max(0, m - S);
+      let microCount = Math.round(remain * params.microFrac);
+      microCount = clamp(microCount, 0, remain);
+      let macroCount = remain - microCount;
+
+      // ensure at least 1 macro if we have remaining points (stable centers)
+      if (remain > 0 && macroCount === 0) {
+        macroCount = 1;
+        microCount = remain - 1;
+      }
+
+      const nonStruct = generateNonStructPoints(macroCount, microCount, region, zones, rand, params);
+
+      const pts = structPts.concat(nonStruct);
+      const fixedMask = new Array(pts.length).fill(false);
+      for (let i = 0; i < S; i++) fixedMask[i] = true;
+
+      // final clamp + de-dup
+      for (let i = 0; i < pts.length; i++) {
+        pts[i] = clampToPlanesByBisection(pts[i], region.inside, region.planes);
+      }
+      nudgeDuplicatesWithinPlanes(pts, region.planes, region.inside, rand, fixedMask);
+
+      return { pts, fixedMask, zones };
+    }
+
+    let L = buildRegionPoints(regionL);
+    let M = buildRegionPoints(regionM);
+    let R = buildRegionPoints(regionR);
+
+    // 8) FINALIZE: Lloyd (STRUCT anchored) -> enforceMinDistance (STRUCT anchored)
+    if (relaxIters > 0) {
+      L.pts = lloydRelaxInRegionAnchored(L.pts, L.fixedMask, size, relaxIters, regionL.planes, regionL.inside, L.zones, rand);
+      M.pts = lloydRelaxInRegionAnchored(M.pts, M.fixedMask, size, relaxIters, regionM.planes, regionM.inside, M.zones, rand);
+      R.pts = lloydRelaxInRegionAnchored(R.pts, R.fixedMask, size, relaxIters, regionR.planes, regionR.inside, R.zones, rand);
+    }
+
+    L.pts = enforceMinDistanceAnchored(
+      L.pts, L.fixedMask,
+      minDistFromArea(regionL.area, L.pts.length, minDistFactor),
+      regionL.planes, regionL.inside, L.zones, rand
+    );
+    M.pts = enforceMinDistanceAnchored(
+      M.pts, M.fixedMask,
+      minDistFromArea(regionM.area, M.pts.length, minDistFactor),
+      regionM.planes, regionM.inside, M.zones, rand
+    );
+    R.pts = enforceMinDistanceAnchored(
+      R.pts, R.fixedMask,
+      minDistFromArea(regionR.area, R.pts.length, minDistFactor),
+      regionR.planes, regionR.inside, R.zones, rand
+    );
+
+    // 9) build clipped cells for each region (hard boundary)
+    const cellsL = buildCellsForRegion(L.pts, size, regionL.planes);
+    const cellsM = buildCellsForRegion(M.pts, size, regionM.planes);
+    const cellsR = buildCellsForRegion(R.pts, size, regionR.planes);
 
     const cellsAll = cellsL.concat(cellsM, cellsR);
-    // if any numeric oddities lead to mismatch, fix deterministically (should not happen)
+
+    // deterministic fix (should not happen): truncate/pad
     if (cellsAll.length !== N) {
-      // adjust by truncation or pad with small cells at center of middle region
       while (cellsAll.length > N) cellsAll.pop();
       while (cellsAll.length < N) {
         const p = insideM;
@@ -707,12 +1149,10 @@
       }
     }
 
-    // 7) shuffle numbering globally
+    // 10) shuffle numbering globally
     const nums = Array.from({ length: N }, (_, i) => i + 1);
     shuffleInPlace(nums, rand);
-    for (let i = 0; i < N; i++) {
-      cellsAll[i].num = nums[i];
-    }
+    for (let i = 0; i < N; i++) cellsAll[i].num = nums[i];
 
     return { cells: cellsAll };
   }

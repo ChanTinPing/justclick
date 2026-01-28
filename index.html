@@ -8,22 +8,15 @@
 </head>
 <body>
   <main class="app">
-    <!-- Start Screen: ONLY 3 visible elements -->
+    <!-- Start Screen -->
     <section id="startScreen" class="startScreen">
-      <button id="settingsBtn" class="iconBtn" aria-label="Settings" title="Settings">⚙</button>
       <h1 class="bigTitle">Just Click</h1>
       <button id="startBtn" class="startBtn">Start</button>
-    </section>
 
-    <!-- Settings Modal -->
-    <div id="modalBackdrop" class="modalBackdrop hidden"></div>
-    <section id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Settings">
-      <div class="modalHeader">
-        <div class="modalTitle">Settings</div>
-        <button id="closeSettingsBtn" class="iconBtn small" aria-label="Close settings">✕</button>
-      </div>
+      <!-- Start Screen Settings (always visible) -->
+      <div class="startSettings" aria-label="Settings">
+        <div class="startSettingsTitle">Settings</div>
 
-      <div class="modalBody">
         <div class="settingGroup">
           <div class="groupLabel">Pieces</div>
           <div class="choiceRow" role="radiogroup" aria-label="Piece count">
@@ -43,7 +36,7 @@
         </div>
 
         <div class="settingGroup">
-          <div class="groupLabel">Random seed</div>
+          <div class="groupLabel">Seed</div>
           <input id="seedInput" class="textInput" type="text" placeholder="" />
         </div>
 
@@ -57,6 +50,7 @@
         </div>
       </div>
     </section>
+
 
     <!-- Game Screen -->
     <section id="gameScreen" class="gameScreen hidden">

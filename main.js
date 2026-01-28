@@ -12,11 +12,6 @@ const els = {
   startScreen: $("#startScreen"),
   gameScreen: $("#gameScreen"),
 
-  settingsBtn: $("#settingsBtn"),
-  settingsModal: $("#settingsModal"),
-  modalBackdrop: $("#modalBackdrop"),
-  closeSettingsBtn: $("#closeSettingsBtn"),
-
   seedInput: $("#seedInput"),
   seedShare: $("#seedShare"),
   showTimerToggle: $("#showTimerToggle"),
@@ -86,9 +81,17 @@ function readConfigFromUI() {
   };
 }
 
+function syncStartSettingsFromConfig() {
+  if (!game.config) return;
+  setPieceCountRadios(game.config.pieceCount ?? DEFAULT_PIECE_COUNT);
+  els.seedInput.value = game.config.seedStr ?? "";
+  els.showTimerToggle.checked = !!game.config.showTimer;
+}
+
 function showStartScreen() {
   els.startScreen.classList.remove("hidden");
   els.gameScreen.classList.add("hidden");
+  syncStartSettingsFromConfig();
   setSeedShare("");
 }
 function showGameScreen() {
@@ -479,22 +482,6 @@ function onCellClick(num) {
     addPenalty(game.config.wrongPenaltySec);
   }
 }
-
-// modal
-function openSettings() {
-  setPieceCountRadios(game.config?.pieceCount ?? DEFAULT_PIECE_COUNT);
-  els.modalBackdrop.classList.remove("hidden");
-  els.settingsModal.classList.remove("hidden");
-}
-function closeSettings() {
-  els.modalBackdrop.classList.add("hidden");
-  els.settingsModal.classList.add("hidden");
-}
-
-els.settingsBtn.addEventListener("click", openSettings);
-els.closeSettingsBtn.addEventListener("click", closeSettings);
-els.modalBackdrop.addEventListener("click", closeSettings);
-window.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSettings(); });
 
 els.startBtn.addEventListener("click", () => {
   const config = readConfigFromUI();
