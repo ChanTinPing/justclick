@@ -490,27 +490,26 @@
   }
 
   // -------------------------
-  // King bubble (STRUCT anchored; king never from STRUCT)
+  // King bubble (FINAL STEP, can break motifs)
+  // - King can be ANY point (including motif/STRUCT).
+  // - King push affects ALL other points (including motif/STRUCT).
+  // - Does NOT guarantee minDist (leave that to Lloyd / enforceMinDistance).
+  // - Does NOT apply pushOutOfZones (since motifs may be destroyed and this is final).
   // -------------------------
   function applyKingBubbleAnchored(points, fixedMask, planes, insidePoint, regionArea, strength, zones, rand) {
     const n = points.length;
-    if (n < 6) return points;
+    if (n < 2) return points;
 
-    // pick king index among FREE points
-    const freeIdx = [];
-    for (let i = 0; i < n; i++) if (!(fixedMask && fixedMask[i])) freeIdx.push(i);
-    if (freeIdx.length === 0) return points;
-
-    const kingIdx = freeIdx[Math.floor(rand() * freeIdx.length)];
+    // king can be ANY point (including motif/STRUCT)
+    const kingIdx = Math.floor(rand() * n);
     const king = points[kingIdx];
 
-    const avg = Math.sqrt(regionArea / n);
+    const avg = Math.sqrt(regionArea / Math.max(1, n));
     const R = avg * strength;
     const keep = 0.85;
 
     for (let i = 0; i < n; i++) {
       if (i === kingIdx) continue;
-      if (fixedMask && fixedMask[i]) continue; // do not move STRUCT
 
       const p = points[i];
       let dx = p[0] - king[0];
@@ -518,10 +517,9 @@
       let d = Math.hypot(dx, dy);
 
       if (d < 1e-9) {
+        // coincident: kick it out to radius R in a random direction
         const ang = rand() * Math.PI * 2;
         let np = [king[0] + Math.cos(ang) * R, king[1] + Math.sin(ang) * R];
-        np = clampToPlanesByBisection(np, insidePoint, planes);
-        np = pushOutOfZones(np, zones, rand);
         np = clampToPlanesByBisection(np, insidePoint, planes);
         points[i] = np;
         continue;
@@ -532,13 +530,12 @@
         const newD = d + (R - d) * keep;
         let np = [king[0] + ux * newD, king[1] + uy * newD];
         np = clampToPlanesByBisection(np, insidePoint, planes);
-        np = pushOutOfZones(np, zones, rand);
-        np = clampToPlanesByBisection(np, insidePoint, planes);
         points[i] = np;
       }
     }
 
-    nudgeDuplicatesWithinPlanes(points, planes, insidePoint, rand, fixedMask);
+    // optional, but helps avoid exact duplicates / degeneracy; allow ALL points to move
+    nudgeDuplicatesWithinPlanes(points, planes, insidePoint, rand, null);
     return points;
   }
 
@@ -984,7 +981,7 @@
     const minDistFactor = 0.6;
 
     // king bubble (before finalize)
-    const kingStrength = 2.2;
+    const kingStrength = 20;
 
     // 1) parallel lines
     const lines = generateParallelLines(size, rand);
@@ -1107,6 +1104,28 @@
     let L = buildRegionPoints(regionL);
     let M = buildRegionPoints(regionM);
     let R = buildRegionPoints(regionR);
+
+    // // 7) King bubble: always pick the largest-area region (L/M/R)
+    // let pick = "M";
+    // let bestA = regionM.area;
+
+    // if (regionL.area > bestA) { bestA = regionL.area; pick = "L"; }
+    // if (regionR.area > bestA) { bestA = regionR.area; pick = "R"; }
+
+    // // (Optional safety) only apply if the chosen region has enough points
+    // if (pick === "L") {
+    //   if (L.pts.length >= 2) {
+    //     L.pts = applyKingBubbleAnchored(L.pts, L.fixedMask, regionL.planes, regionL.inside, regionL.area, kingStrength, L.zones, rand);
+    //   }
+    // } else if (pick === "M") {
+    //   if (M.pts.length >= 2) {
+    //     M.pts = applyKingBubbleAnchored(M.pts, M.fixedMask, regionM.planes, regionM.inside, regionM.area, kingStrength, M.zones, rand);
+    //   }
+    // } else {
+    //   if (R.pts.length >= 2) {
+    //     R.pts = applyKingBubbleAnchored(R.pts, R.fixedMask, regionR.planes, regionR.inside, regionR.area, kingStrength, R.zones, rand);
+    //   }
+    // }
 
     // 8) FINALIZE: Lloyd (STRUCT anchored) -> enforceMinDistance (STRUCT anchored)
     if (relaxIters > 0) {
