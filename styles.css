@@ -526,7 +526,7 @@ body{
   .left .label{ font-size: 10px; }
   .left .value{ font-size: 15px; }
   .right{
-    padding-right: 0px;
+    padding-right: 0px !important;
   }
 
   .boardWrap{
