@@ -708,20 +708,23 @@
   }
 
   function chooseMotifParam(type, maxPoints, rand) {
-    // returns {count, ...params} with count <= maxPoints and >= min
+    maxPoints = Math.max(0, maxPoints | 0);
+
     if (type === 1) {
-      const feasible = [];
-      for (let n = 3; n <= 8; n++) if (n <= maxPoints) feasible.push(n);
-      const n = feasible.length ? feasible[Math.floor(rand() * feasible.length)] : 3;
-      return { type, n, count: n };
+      // regular n-gon, n in [3,8], count = n
+      const nMax = Math.min(8, maxPoints);
+      const n = 3 + Math.floor(rand() * Math.max(1, nMax - 3 + 1));
+      return { type: 1, n, count: n };
     }
+
     if (type === 2) {
-      const feasible = [];
-      for (let n = 3; n <= 8; n++) if (n + 1 <= maxPoints) feasible.push(n);
-      const n = feasible.length ? feasible[Math.floor(rand() * feasible.length)] : 3;
-      return { type, n, count: n + 1 };
+      // regular n-gon + center, n in [3,8], count = n+1
+      const nMax = Math.min(8, maxPoints - 1);
+      const n = 3 + Math.floor(rand() * Math.max(1, nMax - 3 + 1));
+      return { type: 2, n, count: n + 1 };
     }
-    // type 3
+
+    // type === 3: k x n grid, k in {1,2,3}, n in [3,5], count = k*n
     const feasible = [];
     for (let k = 1; k <= 3; k++) {
       for (let n = 3; n <= 5; n++) {
@@ -729,9 +732,12 @@
         if (c <= maxPoints) feasible.push({ k, n, c });
       }
     }
-    if (!feasible.length) return { type, k: 1, n: 3, count: 3 };
+
+    // In your pipeline maxPoints is guaranteed >= motifMinPoints(type), so feasible should not be empty.
+    if (!feasible.length) return { type: 3, k: 1, n: 3, count: 3 };
+
     const pick = feasible[Math.floor(rand() * feasible.length)];
-    return { type, k: pick.k, n: pick.n, count: pick.c };
+    return { type: 3, k: pick.k, n: pick.n, count: pick.c };
   }
 
   // Create motif points and avoid zone in a region
