@@ -525,6 +525,7 @@ body{
   }
   .left .label{ font-size: 10px; }
   .left .value{ font-size: 15px; }
+  .modePill{ padding: 0; }
 
   .boardWrap{
     width: calc(100vw - 4px);
