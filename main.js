@@ -198,7 +198,7 @@ function clearSvg(svg) {
 }
 
 function getFontSizeForN(n) {
-  const size = Math.round(220 / Math.sqrt(n));
+  const size = Math.round(225 / Math.sqrt(n));
   return size;
 }
 
