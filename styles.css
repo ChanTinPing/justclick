@@ -377,7 +377,7 @@ body{
 }
 
 .cellText{
-  font-weight: 450;
+  font-weight: 600;
   fill: rgba(11,27,58,0.80);
   user-select: none;
   pointer-events: none;
