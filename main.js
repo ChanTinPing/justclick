@@ -188,7 +188,7 @@ function updateHUD() {
   if (els.modePill) {
     const raw = String(game.config?.mode || "normal").trim().toLowerCase();
     const modeName = (raw === "easy") ? "Easy" : (raw === "hard") ? "Hard" : "Normal";
-    els.modePill.textContent = `${modeName}`;
+    els.modePill.textContent = `${modeName} ${game.total}`;
     els.modePill.classList.toggle("done", game.state === STATE.FINISHED); // Done 后变绿
   }
 
