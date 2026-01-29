@@ -42,6 +42,10 @@ const WRONG_PENALTY_SEC = 10;
 const BOARD_SIZE = 1000;
 const STATE = { IDLE: "idle", PLAYING: "playing", PAUSED: "paused", FINISHED: "finished" };
 
+function gaEvent(name, params = {}) {
+  if (typeof window.gtag === "function") window.gtag("event", name, params);
+}
+
 let game = {
   state: STATE.IDLE,
   config: null,
@@ -463,6 +467,12 @@ function finishGame() {
   game.state = STATE.FINISHED;
   applyHardTextRule();
   updateHUD();
+
+  gaEvent("game_complete", {
+    piece_count: game.total,             // 12/20/50/100
+    mode: game.config?.mode || "unknown",
+    time_ms: Math.round(game.elapsedMs), // 你的用时
+  });
 }
 
 function pauseGame() {
